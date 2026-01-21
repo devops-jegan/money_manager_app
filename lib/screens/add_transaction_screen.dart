@@ -1,15 +1,12 @@
+new 
 import '../utils/categories.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction_model.dart';
 import '../models/account_model.dart';
-import '../models/account_model.dart';
 import '../services/transaction_service.dart';
 import '../services/account_service.dart';
-import '../services/account_service.dart';
-// import '../utils/subcategories.dart';
 
 class AddTransactionScreen extends StatefulWidget {
   final TransactionModel? transaction;
@@ -34,7 +31,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TextEditingController _amountController = TextEditingController();
   String? _selectedCategory;
   String? _selectedSubcategory;
-  String _paymentMethod = 'Cash';
+  String? _paymentMethod;
   String? _fromAccount;
   String? _toAccount;
 
@@ -42,34 +39,26 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TextEditingController _noteController = TextEditingController();
   bool _isLoading = false;
   bool _isRecurring = false;
-  String _recurringFrequency = 'monthly';
+  String _selectedFrequency = 'monthly';
 
   List<AccountModel> _accounts = [];
-
-  final List<String> _paymentMethods = [
-    'Cash',
-    'Credit Card',
-    'Debit Card',
-    'UPI',
-    'Net Banking',
-    'Wallet',
-  ];
 
   @override
   void initState() {
     super.initState();
-    _loadAccounts();
     _loadAccounts();
     if (widget.transaction != null) {
       _type = widget.transaction!.type;
       _amountController.text = widget.transaction!.amount.toString();
       _selectedCategory = widget.transaction!.category;
       _selectedSubcategory = widget.transaction!.subcategory;
-      _paymentMethod = widget.transaction!.paymentMethod ?? 'Cash';
+      _paymentMethod = widget.transaction!.paymentMethod;
       _fromAccount = widget.transaction!.fromAccount;
       _toAccount = widget.transaction!.toAccount;
       _selectedDate = widget.transaction!.date;
       _noteController.text = widget.transaction!.note ?? '';
+      _isRecurring = widget.transaction!.isRecurring ?? false;
+      _selectedFrequency = widget.transaction!.recurringFrequency ?? 'monthly';
     }
   }
 
@@ -229,7 +218,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             // Show recurring frequency if enabled
             if (_isRecurring) ...[
               DropdownButtonFormField<String>(
-                value: _recurringFrequency,
+                value: _selectedFrequency,
                 decoration: const InputDecoration(
                   labelText: 'Repeat Frequency',
                   border: OutlineInputBorder(),
@@ -243,7 +232,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ],
                 onChanged: (value) {
                   setState(() {
-                    _recurringFrequency = value!;
+                    _selectedFrequency = value!;
                   });
                 },
               ),
@@ -256,7 +245,83 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             ] else ...[
               _buildCategoryFields(),
               const SizedBox(height: 16),
-              _buildPaymentMethodField(),
+              
+              // Account Selection (for Income and Expense)
+              StreamBuilder<QuerySnapshot>(
+                stream: _accountService.getAccounts(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final accounts = snapshot.data!.docs
+                      .map((doc) => AccountModel.fromMap(
+                            doc.data() as Map<String, dynamic>,
+                            doc.id,
+                          ))
+                      .toList();
+
+                  return DropdownButtonFormField<String>(
+                    value: _fromAccount,
+                    decoration: InputDecoration(
+                      labelText: _type == 'income' ? 'To Account' : 'From Account',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.account_balance_wallet),
+                      hintText: 'Select account (optional)',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('No account selected'),
+                      ),
+                      ...accounts.map((account) {
+                        return DropdownMenuItem<String>(
+                          value: account.id,
+                          child: Row(
+                            children: [
+                              Icon(_getAccountIcon(account.type), size: 20),
+                              const SizedBox(width: 8),
+                              Text(account.name),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _fromAccount = value;
+                      });
+                    },
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Payment Method (Optional - for tracking payment type)
+              if (_type == 'expense')
+                DropdownButtonFormField<String>(
+                  value: _paymentMethod,
+                  decoration: const InputDecoration(
+                    labelText: 'Payment Method (Optional)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.payment),
+                    hintText: 'Cash, Card, UPI, etc.',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: null, child: Text('Not specified')),
+                    DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                    DropdownMenuItem(value: 'Debit Card', child: Text('Debit Card')),
+                    DropdownMenuItem(value: 'Credit Card', child: Text('Credit Card')),
+                    DropdownMenuItem(value: 'UPI', child: Text('UPI')),
+                    DropdownMenuItem(value: 'Net Banking', child: Text('Net Banking')),
+                    DropdownMenuItem(value: 'Wallet', child: Text('Digital Wallet')),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _paymentMethod = value;
+                    });
+                  },
+                ),
             ],
 
             const SizedBox(height: 16),
@@ -295,6 +360,25 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         ),
       ),
     );
+  }
+
+  // Helper method for account icons
+  IconData _getAccountIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'bank':
+        return Icons.account_balance;
+      case 'cash':
+        return Icons.money;
+      case 'credit card':
+      case 'card':
+        return Icons.credit_card;
+      case 'wallet':
+        return Icons.account_balance_wallet;
+      case 'loan':
+        return Icons.trending_down;
+      default:
+        return Icons.account_circle;
+    }
   }
 
   Widget _buildCategoryFields() {
@@ -373,7 +457,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ),
               ),
 
-              // Categories Grid (3 per row like Money Manager)
+              // Categories Grid
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -516,7 +600,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           TextButton(
             onPressed: () {
               if (controller.text.isNotEmpty) {
-                // Add to categories (you'll need to implement storage)
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -568,24 +651,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildPaymentMethodField() {
-    return DropdownButtonFormField<String>(
-      value: _paymentMethod,
-      decoration: const InputDecoration(
-        labelText: 'Payment Method *',
-        border: OutlineInputBorder(),
-      ),
-      items: _paymentMethods
-          .map((pm) => DropdownMenuItem(value: pm, child: Text(pm)))
-          .toList(),
-      onChanged: (value) {
-        setState(() {
-          _paymentMethod = value!;
-        });
-      },
     );
   }
 
@@ -671,79 +736,87 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   }
 
   Future<void> _saveTransaction() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    if (_type != 'transfer' && _selectedCategory == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a category'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final transaction = TransactionModel(
-        id: widget.transaction?.id ?? '',
-        type: _type,
-        amount: double.parse(_amountController.text),
-        category: _type == 'transfer' ? 'Transfer' : _selectedCategory!,
-        subcategory: _selectedSubcategory,
-        paymentMethod: _type == 'transfer' ? null : _paymentMethod,
-        fromAccount: _type == 'transfer' ? _fromAccount : null,
-        toAccount: _type == 'transfer' ? _toAccount : null,
-        date: _selectedDate,
-        note: _noteController.text.isEmpty ? null : _noteController.text,
-      );
-
-      if (widget.transaction != null && !widget.isCopy) {
-        await _transactionService.updateTransaction(
-          widget.transaction!.id!,
-          transaction,
-        );
-      } else {
-        await _transactionService.addTransaction(transaction);
-
-
-        if (_type == 'transfer') {
-          await _accountService.updateAccountBalance(
-            _fromAccount!,
-            -transaction.amount,
+    if (_formKey.currentState!.validate()) {
+      // Validation for transfer
+      if (_type == 'transfer') {
+        if (_fromAccount == null || _toAccount == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please select both accounts for transfer')),
           );
-          await _accountService.updateAccountBalance(
-            _toAccount!,
-            transaction.amount,
+          return;
+        }
+        if (_fromAccount == _toAccount) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('From and To accounts must be different')),
           );
+          return;
         }
       }
 
-      if (mounted) {
-        Navigator.pop(context);
+      // Validation for category (non-transfer)
+      if (_type != 'transfer' && _selectedCategory == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.isCopy
-                ? 'Transaction copied'
-                : (widget.transaction != null ? 'Updated' : 'Added')),
-            backgroundColor: Colors.green,
+          const SnackBar(
+            content: Text('Please select a category'),
+            backgroundColor: Colors.red,
           ),
         );
+        return;
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        final transaction = TransactionModel(
+          id: widget.transaction?.id ?? '',
+          type: _type,
+          amount: double.parse(_amountController.text),
+          category: _type == 'transfer' ? 'Transfer' : _selectedCategory!,
+          subcategory: _selectedSubcategory,
+          paymentMethod: _type == 'expense' ? _paymentMethod : null,
+          date: _selectedDate,
+          note: _noteController.text.isEmpty ? null : _noteController.text,
+          fromAccount: _type == 'transfer' 
+              ? _fromAccount 
+              : (_type == 'expense' ? _fromAccount : null),
+          toAccount: _type == 'transfer' 
+              ? _toAccount 
+              : (_type == 'income' ? _fromAccount : null),
+          isRecurring: _isRecurring,
+          recurringFrequency: _isRecurring ? _selectedFrequency : null,
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+
+        if (widget.transaction != null && !widget.isCopy) {
+          await _transactionService.updateTransaction(transaction.id, transaction);
+        } else {
+          await _transactionService.addTransaction(transaction);
+        }
+
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(widget.transaction != null && !widget.isCopy
+                  ? 'Transaction updated successfully!'
+                  : 'Transaction added successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e')),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }
