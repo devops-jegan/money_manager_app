@@ -30,7 +30,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
     _accountService.getAccounts().listen((snapshot) {
       setState(() {
         _accountsMap = {
-          for (var doc in snapshot.docs)
+          for (var doc in snapshot.data!)
             doc.id: AccountModel.fromMap(
               doc.data() as Map<String, dynamic>,
               doc.id,

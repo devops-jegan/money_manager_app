@@ -57,7 +57,6 @@ class TransactionDetailScreen extends StatelessWidget {
                 MaterialPageRoute(
                   builder: (context) => AddTransactionScreen(
                     transaction: copiedTransaction,
-                    isCopy: true,
                   ),
                 ),
               );

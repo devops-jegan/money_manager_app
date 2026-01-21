@@ -33,14 +33,14 @@ class _AccountsScreenState extends State<AccountsScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
+      body: StreamBuilder<List<AccountModel>>(
         stream: _accountService.getAccounts(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -77,7 +77,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
             );
           }
 
-          final accounts = snapshot.data!.docs
+          final accounts = snapshot.data!
               .map((doc) => AccountModel.fromMap(
                     doc.data() as Map<String, dynamic>,
                     doc.id,

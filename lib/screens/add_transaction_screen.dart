@@ -193,7 +193,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Date Picker (at top)
               ListTile(
                 title: Text('Date: ${DateFormat('dd MMM yyyy').format(_selectedDate)}'),
                 leading: const Icon(Icons.calendar_today),
@@ -204,8 +203,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 onTap: () => _selectDate(context),
               ),
               const SizedBox(height: 16),
-
-              // Type selector (Income/Expense/Transfer)
               Row(
                 children: [
                   Expanded(
@@ -254,8 +251,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-
-              // Amount field
               TextFormField(
                 controller: _amountController,
                 decoration: const InputDecoration(
@@ -275,8 +270,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 },
               ),
               const SizedBox(height: 16),
-
-              // Category (not for transfer)
               if (_type != 'transfer')
                 DropdownButtonFormField<String>(
                   value: _selectedCategory,
@@ -299,8 +292,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   },
                 ),
               if (_type != 'transfer') const SizedBox(height: 16),
-
-              // Subcategory (optional)
               if (_type != 'transfer' && _selectedCategory != null)
                 Builder(
                   builder: (context) {
@@ -339,8 +330,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     );
                   },
                 ),
-
-              // Account Selection for Transfer
               if (_type == 'transfer') ...[
                 StreamBuilder<List<AccountModel>>(
                   stream: _accountService.getAccounts(),
@@ -348,9 +337,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     if (!snapshot.hasData) {
                       return const CircularProgressIndicator();
                     }
-
                     final accounts = snapshot.data!;
-
                     return Column(
                       children: [
                         DropdownButtonFormField<String>(
@@ -422,8 +409,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   },
                 ),
               ],
-
-              // Account Selection for Income/Expense
               if (_type != 'transfer')
                 StreamBuilder<List<AccountModel>>(
                   stream: _accountService.getAccounts(),
@@ -431,9 +416,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     if (!snapshot.hasData) {
                       return const SizedBox.shrink();
                     }
-
                     final accounts = snapshot.data!;
-
                     return Column(
                       children: [
                         DropdownButtonFormField<String>(
@@ -472,8 +455,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     );
                   },
                 ),
-
-              // Payment Method (for expense only)
               if (_type == 'expense')
                 DropdownButtonFormField<String>(
                   value: _paymentMethod,
@@ -498,8 +479,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   },
                 ),
               if (_type == 'expense') const SizedBox(height: 16),
-
-              // Notes field
               TextFormField(
                 controller: _noteController,
                 decoration: const InputDecoration(
@@ -510,8 +489,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 maxLines: 3,
               ),
               const SizedBox(height: 16),
-
-              // Recurring toggle
               SwitchListTile(
                 title: const Text('Recurring Transaction'),
                 subtitle: Text(_isRecurring ? 'Repeats $_selectedFrequency' : 'One-time'),
@@ -522,8 +499,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   });
                 },
               ),
-
-              // Frequency selector (if recurring)
               if (_isRecurring) ...[
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
@@ -546,10 +521,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   },
                 ),
               ],
-
               const SizedBox(height: 24),
-
-              // Save button
               ElevatedButton(
                 onPressed: _isLoading ? null : _saveTransaction,
                 style: ElevatedButton.styleFrom(
