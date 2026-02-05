@@ -1,66 +1,95 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/transfer_model.dart';
+import '../models/account_model.dart';
 import 'account_service.dart';
 
 class TransferService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final String _collection = 'transfers';
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
   final AccountService _accountService = AccountService();
 
-  // Get all transfers
-  Stream<QuerySnapshot> getTransfers() {
-    return _firestore
-        .collection(_collection)
-        .orderBy('date', descending: true)
-        .snapshots();
-  }
-
-  // Add transfer (and update account balances)
   Future<void> addTransfer(TransferModel transfer) async {
     try {
-      // Add transfer record
-      await _firestore.collection(_collection).add(transfer.toMap());
+      // Start a batch write
+      final batch = _db.batch();
+
+      // Add transfer document
+      final transferRef = _db.collection('transfers').doc();
+      batch.set(transferRef, transfer.toMap());
 
       // Update account balances
-      await _accountService.updateAccountBalance(
-        transfer.fromAccount,
-        -transfer.amount, // Deduct from source
-      );
-      await _accountService.updateAccountBalance(
-        transfer.toAccount,
-        transfer.amount, // Add to destination
-      );
+      final fromAccountRef = _db.collection('accounts').doc(transfer.fromAccountId);
+      final toAccountRef = _db.collection('accounts').doc(transfer.toAccountId);
+
+      // Get current balances
+      final fromAccountDoc = await fromAccountRef.get();
+      final toAccountDoc = await toAccountRef.get();
+
+      if (!fromAccountDoc.exists || !toAccountDoc.exists) {
+        throw Exception('One or both accounts not found');
+      }
+
+      final fromBalance = (fromAccountDoc.data()?['balance'] ?? 0).toDouble();
+      final toBalance = (toAccountDoc.data()?['balance'] ?? 0).toDouble();
+
+      // Update balances
+      batch.update(fromAccountRef, {'balance': fromBalance - transfer.amount});
+      batch.update(toAccountRef, {'balance': toBalance + transfer.amount});
+
+      // Commit the batch
+      await batch.commit();
     } catch (e) {
       throw Exception('Failed to add transfer: $e');
     }
   }
 
-  // Delete transfer (and reverse account balances)
-  Future<void> deleteTransfer(TransferModel transfer) async {
-    try {
-      // Delete transfer record
-      await _firestore.collection(_collection).doc(transfer.id).delete();
-
-      // Reverse account balances
-      await _accountService.updateAccountBalance(
-        transfer.fromAccount,
-        transfer.amount, // Add back to source
-      );
-      await _accountService.updateAccountBalance(
-        transfer.toAccount,
-        -transfer.amount, // Deduct from destination
-      );
-    } catch (e) {
-      throw Exception('Failed to delete transfer: $e');
-    }
+  Stream<List<TransferModel>> getTransfers() {
+    return _db
+        .collection('transfers')
+        .orderBy('date', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => TransferModel.fromFirestore(doc))
+            .toList());
   }
 
-  // Get single transfer
-  Future<DocumentSnapshot> getTransferById(String id) async {
+  Future<void> deleteTransfer(String id) async {
     try {
-      return await _firestore.collection(_collection).doc(id).get();
+      // Get the transfer first
+      final transferDoc = await _db.collection('transfers').doc(id).get();
+      
+      if (!transferDoc.exists) {
+        throw Exception('Transfer not found');
+      }
+
+      final transfer = TransferModel.fromFirestore(transferDoc);
+
+      // Start a batch write
+      final batch = _db.batch();
+
+      // Delete transfer document
+      batch.delete(_db.collection('transfers').doc(id));
+
+      // Reverse the account balance changes
+      final fromAccountRef = _db.collection('accounts').doc(transfer.fromAccountId);
+      final toAccountRef = _db.collection('accounts').doc(transfer.toAccountId);
+
+      // Get current balances
+      final fromAccountDoc = await fromAccountRef.get();
+      final toAccountDoc = await toAccountRef.get();
+
+      if (fromAccountDoc.exists && toAccountDoc.exists) {
+        final fromBalance = (fromAccountDoc.data()?['balance'] ?? 0).toDouble();
+        final toBalance = (toAccountDoc.data()?['balance'] ?? 0).toDouble();
+
+        // Reverse the transfer
+        batch.update(fromAccountRef, {'balance': fromBalance + transfer.amount});
+        batch.update(toAccountRef, {'balance': toBalance - transfer.amount});
+      }
+
+      // Commit the batch
+      await batch.commit();
     } catch (e) {
-      throw Exception('Failed to get transfer: $e');
+      throw Exception('Failed to delete transfer: $e');
     }
   }
 }
