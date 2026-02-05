@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../models/transfer_model.dart';
 import '../models/account_model.dart';
@@ -15,17 +14,16 @@ class AddTransferScreen extends StatefulWidget {
 
 class _AddTransferScreenState extends State<AddTransferScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _amountController = TextEditingController();
+  final _noteController = TextEditingController();
   final TransferService _transferService = TransferService();
   final AccountService _accountService = AccountService();
 
-  final TextEditingController _amountController = TextEditingController();
-  String? _fromAccount;
-  String? _toAccount;
-  DateTime _selectedDate = DateTime.now();
-  final TextEditingController _noteController = TextEditingController();
-  bool _isLoading = false;
-
   List<AccountModel> _accounts = [];
+  String? _fromAccountId;
+  String? _toAccountId;
+  DateTime _selectedDate = DateTime.now();
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -33,11 +31,14 @@ class _AddTransferScreenState extends State<AddTransferScreen> {
     _loadAccounts();
   }
 
-  void _loadAccounts() {
-    _accountService.getAccounts().listen((snapshot) {
-      setState(() {
-        _accounts = snapshot.data!;
-      });
+  void _loadAccounts() async {
+    final accountsStream = _accountService.getAccounts();
+    accountsStream.listen((accounts) {
+      if (mounted) {
+        setState(() {
+          _accounts = accounts;
+        });
+      }
     });
   }
 
@@ -48,247 +49,350 @@ class _AddTransferScreenState extends State<AddTransferScreen> {
     super.dispose();
   }
 
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  Future<void> _saveTransfer() async {
+    if (_formKey.currentState!.validate()) {
+      if (_fromAccountId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a source account')),
+        );
+        return;
+      }
+      if (_toAccountId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a destination account')),
+        );
+        return;
+      }
+      if (_fromAccountId == _toAccountId) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Source and destination accounts must be different')),
+        );
+        return;
+      }
+
+      setState(() => _isLoading = true);
+
+      try {
+        final transfer = TransferModel(
+          id: '',
+          fromAccountId: _fromAccountId!,
+          toAccountId: _toAccountId!,
+          amount: double.parse(_amountController.text),
+          date: _selectedDate,
+          note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+        );
+
+        await _transferService.addTransfer(transfer);
+
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Transfer added successfully')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e')),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
+
+  String _getAccountName(String accountId) {
+    try {
+      final account = _accounts.firstWhere((a) => a.id == accountId);
+      return account.name;
+    } catch (e) {
+      return 'Unknown Account';
+    }
+  }
+
+  IconData _getAccountIcon(String accountId) {
+    try {
+      final account = _accounts.firstWhere((a) => a.id == accountId);
+      switch (account.type) {
+        case 'cash':
+          return Icons.money;
+        case 'bank':
+          return Icons.account_balance;
+        case 'credit_card':
+          return Icons.credit_card;
+        case 'loan':
+          return Icons.request_quote;
+        default:
+          return Icons.account_balance_wallet;
+      }
+    } catch (e) {
+      return Icons.account_balance_wallet;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Transfer Money'),
+        title: const Text('Add Transfer'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: _accounts.isEmpty
           ? const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.account_balance_wallet_outlined,
-                      size: 64, color: Colors.grey),
+                  Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey),
                   SizedBox(height: 16),
-                  Text('No accounts available'),
+                  Text(
+                    'No accounts available',
+                    style: TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
                   SizedBox(height: 8),
                   Text(
-                    'Please create accounts first',
-                    style: TextStyle(color: Colors.grey),
+                    'Please add at least 2 accounts to make transfers',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
             )
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // From Account
-                  DropdownButtonFormField<String>(
-                    value: _fromAccount,
-                    decoration: const InputDecoration(
-                      labelText: 'From Account *',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.account_balance_wallet),
-                    ),
-                    items: _accounts
-                        .map((account) => DropdownMenuItem(
-                              value: account.id,
-                              child: Text(
-                                  '${account.name} (₹${account.balance.toStringAsFixed(0)})'),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        _fromAccount = value;
-                      });
-                    },
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please select source account';
-                      }
-                      if (value == _toAccount) {
-                        return 'Cannot transfer to same account';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Swap Button
-                  Center(
-                    child: IconButton(
-                      onPressed: () {
-                        setState(() {
-                          final temp = _fromAccount;
-                          _fromAccount = _toAccount;
-                          _toAccount = temp;
-                        });
-                      },
-                      icon: const Icon(Icons.swap_vert),
-                      iconSize: 32,
-                      color: Colors.blue,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // To Account
-                  DropdownButtonFormField<String>(
-                    value: _toAccount,
-                    decoration: const InputDecoration(
-                      labelText: 'To Account *',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.account_balance),
-                    ),
-                    items: _accounts
-                        .map((account) => DropdownMenuItem(
-                              value: account.id,
-                              child: Text(
-                                  '${account.name} (₹${account.balance.toStringAsFixed(0)})'),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        _toAccount = value;
-                      });
-                    },
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please select destination account';
-                      }
-                      if (value == _fromAccount) {
-                        return 'Cannot transfer to same account';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Amount
-                  TextFormField(
-                    controller: _amountController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Amount *',
-                      prefixText: '₹ ',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.currency_rupee),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter amount';
-                      }
-                      if (double.tryParse(value) == null) {
-                        return 'Please enter valid amount';
-                      }
-                      if (double.parse(value) <= 0) {
-                        return 'Amount must be greater than 0';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Date Picker
-                  InkWell(
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedDate,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime(2100),
-                      );
-                      if (date != null) {
-                        setState(() {
-                          _selectedDate = date;
-                        });
-                      }
-                    },
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Date *',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.calendar_today),
+          : _accounts.length < 2
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        'Need at least 2 accounts',
+                        style: TextStyle(fontSize: 18, color: Colors.grey),
                       ),
-                      child: Text(
-                        DateFormat('EEEE, MMM d, yyyy').format(_selectedDate),
-                        style: const TextStyle(fontSize: 16),
+                      SizedBox(height: 8),
+                      Text(
+                        'Please add one more account to make transfers',
+                        style: TextStyle(fontSize: 14, color: Colors.grey),
+                        textAlign: TextAlign.center,
                       ),
-                    ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // From Account
+                        const Text(
+                          'From Account',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: _fromAccountId,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.account_balance_wallet),
+                            hintText: 'Select source account',
+                          ),
+                          items: _accounts.map((account) {
+                            return DropdownMenuItem<String>(
+                              value: account.id,
+                              child: Row(
+                                children: [
+                                  Icon(_getAccountIcon(account.id), size: 20),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      account.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Text(
+                                    '₹${account.balance.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _fromAccountId = value;
+                            });
+                          },
+                          validator: (value) {
+                            if (value == null) {
+                              return 'Please select source account';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 24),
 
-                  // Note
-                  TextFormField(
-                    controller: _noteController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Note (Optional)',
-                      border: OutlineInputBorder(),
-                      hintText: 'Add transfer details...',
-                      prefixIcon: Icon(Icons.note),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
+                        // Transfer Icon
+                        Center(
+                          child: Icon(
+                            Icons.arrow_downward,
+                            size: 32,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
 
-                  // Transfer Button
-                  ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _saveTransfer,
-                    icon: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.swap_horiz),
-                    label: const Text(
-                      'TRANSFER',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.all(16),
+                        // To Account
+                        const Text(
+                          'To Account',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: _toAccountId,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.account_balance_wallet),
+                            hintText: 'Select destination account',
+                          ),
+                          items: _accounts.map((account) {
+                            return DropdownMenuItem<String>(
+                              value: account.id,
+                              child: Row(
+                                children: [
+                                  Icon(_getAccountIcon(account.id), size: 20),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      account.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Text(
+                                    '₹${account.balance.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _toAccountId = value;
+                            });
+                          },
+                          validator: (value) {
+                            if (value == null) {
+                              return 'Please select destination account';
+                            }
+                            if (value == _fromAccountId) {
+                              return 'Cannot transfer to same account';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Amount
+                        TextFormField(
+                          controller: _amountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Amount',
+                            hintText: '0.00',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.currency_rupee),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please enter amount';
+                            }
+                            if (double.tryParse(value) == null) {
+                              return 'Please enter a valid number';
+                            }
+                            final amount = double.parse(value);
+                            if (amount <= 0) {
+                              return 'Amount must be greater than 0';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Date
+                        ListTile(
+                          title: Text('Date: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}'),
+                          leading: const Icon(Icons.calendar_today),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            side: BorderSide(color: Colors.grey.shade400),
+                          ),
+                          onTap: () => _selectDate(context),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Note
+                        TextFormField(
+                          controller: _noteController,
+                          decoration: const InputDecoration(
+                            labelText: 'Note (Optional)',
+                            hintText: 'Add transfer details',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.note),
+                          ),
+                          maxLines: 3,
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Save Button
+                        ElevatedButton(
+                          onPressed: _isLoading ? null : _saveTransfer,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.all(16),
+                            backgroundColor: Colors.purple,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Transfer Money',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
+                ),
     );
-  }
-
-  Future<void> _saveTransfer() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final transfer = TransferModel(
-        fromAccount: _fromAccount!,
-        toAccount: _toAccount!,
-        amount: double.parse(_amountController.text),
-        date: _selectedDate,
-        note: _noteController.text.isEmpty ? null : _noteController.text,
-      );
-
-      await _transferService.addTransfer(transfer);
-
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Transfer completed successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
   }
 }
