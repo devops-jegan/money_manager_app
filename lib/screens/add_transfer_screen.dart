@@ -36,12 +36,7 @@ class _AddTransferScreenState extends State<AddTransferScreen> {
   void _loadAccounts() {
     _accountService.getAccounts().listen((snapshot) {
       setState(() {
-        _accounts = snapshot.data!
-            .map((doc) => AccountModel.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  doc.id,
-                ))
-            .toList();
+        _accounts = snapshot.data!;
       });
     });
   }

@@ -6,6 +6,7 @@ class AccountModel {
   final String type;
   final double balance;
   final String? icon;
+  final String? note;
   final DateTime createdAt;
 
   AccountModel({
@@ -14,8 +15,32 @@ class AccountModel {
     required this.type,
     required this.balance,
     this.icon,
+    this.note,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
+
+  // Helper getters
+  String get typeDisplayName {
+    switch (type.toLowerCase()) {
+      case 'bank':
+        return 'Bank Account';
+      case 'cash':
+        return 'Cash';
+      case 'credit card':
+      case 'card':
+        return 'Credit Card';
+      case 'wallet':
+        return 'Digital Wallet';
+      case 'loan':
+        return 'Loan';
+      default:
+        return type;
+    }
+  }
+
+  bool get isDebt {
+    return type.toLowerCase() == 'loan' || type.toLowerCase() == 'credit card';
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -23,6 +48,7 @@ class AccountModel {
       'type': type,
       'balance': balance,
       'icon': icon,
+      'note': note,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
@@ -35,6 +61,7 @@ class AccountModel {
       type: data['type'] ?? 'cash',
       balance: (data['balance'] ?? 0).toDouble(),
       icon: data['icon'],
+      note: data['note'],
       createdAt: data['createdAt'] != null
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
@@ -47,6 +74,7 @@ class AccountModel {
     String? type,
     double? balance,
     String? icon,
+    String? note,
     DateTime? createdAt,
   }) {
     return AccountModel(
@@ -55,6 +83,7 @@ class AccountModel {
       type: type ?? this.type,
       balance: balance ?? this.balance,
       icon: icon ?? this.icon,
+      note: note ?? this.note,
       createdAt: createdAt ?? this.createdAt,
     );
   }

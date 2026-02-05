@@ -78,10 +78,6 @@ class _AccountsScreenState extends State<AccountsScreen> {
           }
 
           final accounts = snapshot.data!
-              .map((doc) => AccountModel.fromMap(
-                    doc.data() as Map<String, dynamic>,
-                    doc.id,
-                  ))
               .toList();
 
           // Calculate totals
@@ -128,17 +124,12 @@ class _AccountsScreenState extends State<AccountsScreen> {
                 const SizedBox(height: 8),
 
                 // Accounts List
-                if (grouped.containsKey('cash'))
                   _buildAccountGroup('Cash', grouped['cash']!, Colors.green),
-                if (grouped.containsKey('bank'))
                   _buildAccountGroup(
                       'Bank Accounts', grouped['bank']!, Colors.blue),
-                if (grouped.containsKey('credit_card'))
                   _buildAccountGroup(
                       'Credit Cards', grouped['credit_card']!, Colors.orange),
-                if (grouped.containsKey('loan'))
                   _buildAccountGroup('Loans', grouped['loan']!, Colors.red),
-                if (grouped.containsKey('other'))
                   _buildAccountGroup('Others', grouped['other']!, Colors.grey),
 
                 const SizedBox(height: 80), // Space for FAB

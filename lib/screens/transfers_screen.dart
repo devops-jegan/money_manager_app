@@ -26,20 +26,16 @@ class _TransfersScreenState extends State<TransfersScreen> {
     _loadAccounts();
   }
 
-  void _loadAccounts() {
-    _accountService.getAccounts().listen((snapshot) {
-      setState(() {
-        _accountsMap = {
-          for (var doc in snapshot.data!)
-            doc.id: AccountModel.fromMap(
-              doc.data() as Map<String, dynamic>,
-              doc.id,
-            )
-        };
-      });
+void _loadAccounts() {
+  _accountService.getAccounts().listen((accounts) {
+    setState(() {
+      _accountsMap = {
+        for (var account in accounts)
+          account.id: account
+      };
     });
-  }
-
+  });
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
