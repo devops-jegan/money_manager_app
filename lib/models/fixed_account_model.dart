@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AccountModel {
-  final String? id;
+  final String id;
   final String name;
   final String type; // 'cash', 'bank', 'credit_card', 'loan', 'other'
   final double balance;
@@ -10,7 +10,7 @@ class AccountModel {
   final DateTime createdAt;
 
   AccountModel({
-    this.id,
+    required this.id,
     required this.name,
     required this.type,
     required this.balance,
@@ -42,6 +42,11 @@ class AccountModel {
           ? (map['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
     );
+  }
+
+  factory AccountModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return AccountModel.fromMap(data, doc.id);
   }
 
   AccountModel copyWith({
@@ -83,4 +88,3 @@ class AccountModel {
     }
   }
 }
-
