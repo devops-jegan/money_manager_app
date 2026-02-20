@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
-import 'reports_screen.dart';
+import 'accounts_screen.dart'; // ✅ NEW: Import accounts screen
+import 'enhanced_reports_screen.dart';
 import 'budget_screen.dart';
 import 'more_screen.dart';
 
@@ -16,7 +17,8 @@ class _MainNavigationState extends State<MainNavigation> {
 
   final List<Widget> _screens = [
     const HomeScreen(),
-    const ReportsScreen(),
+    const AccountsScreen(), // ✅ NEW: Accounts screen
+    const EnhancedReportsScreen(),
     const BudgetScreen(),
     const MoreScreen(),
   ];
@@ -41,11 +43,15 @@ class _MainNavigationState extends State<MainNavigation> {
             label: 'Home',
           ),
           BottomNavigationBarItem(
+            icon: Icon(Icons.account_balance_wallet), // ✅ NEW: Accounts
+            label: 'Accounts',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.insert_chart),
             label: 'Reports',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance_wallet),
+            icon: Icon(Icons.pie_chart), // ✅ Changed icon for Budget
             label: 'Budget',
           ),
           BottomNavigationBarItem(

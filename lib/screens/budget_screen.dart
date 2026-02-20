@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import '../models/budget.dart';
-import '../models/transaction.dart' as app_transaction;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/budget_model.dart';
+import '../models/transaction_model.dart';
 import '../services/budget_service.dart';
-import '../services/firestore_service.dart';
+import '../services/transaction_service.dart';
 
 class BudgetScreen extends StatefulWidget {
   const BudgetScreen({super.key});
@@ -14,7 +15,7 @@ class BudgetScreen extends StatefulWidget {
 
 class _BudgetScreenState extends State<BudgetScreen> {
   final BudgetService _budgetService = BudgetService();
-  final FirestoreService _firestoreService = FirestoreService();
+  final TransactionService _transactionService = TransactionService();
 
   @override
   Widget build(BuildContext context) {
@@ -24,21 +25,23 @@ class _BudgetScreenState extends State<BudgetScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         automaticallyImplyLeading: false,
       ),
-      body: StreamBuilder<List<Budget>>(
+      body: StreamBuilder<QuerySnapshot>(
         stream: _budgetService.getBudgets(),
-        builder: (context, budgetSnapshot) {
-          if (budgetSnapshot.connectionState == ConnectionState.waiting) {
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (!budgetSnapshot.hasData || budgetSnapshot.data!.isEmpty) {
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey),
+                  const Icon(Icons.account_balance_wallet,
+                      size: 80, color: Colors.grey),
                   const SizedBox(height: 16),
-                  const Text('No budgets set', style: TextStyle(fontSize: 18, color: Colors.grey)),
+                  const Text('No budgets set',
+                      style: TextStyle(fontSize: 18, color: Colors.grey)),
                   const SizedBox(height: 8),
                   ElevatedButton.icon(
                     onPressed: () => _showAddBudgetDialog(context),
@@ -50,8 +53,12 @@ class _BudgetScreenState extends State<BudgetScreen> {
             );
           }
 
-          return StreamBuilder<List<app_transaction.Transaction>>(
-            stream: _firestoreService.getTransactions(),
+          final budgets = snapshot.data!.docs
+              .map((doc) => BudgetModel.fromFirestore(doc))
+              .toList();
+
+          return FutureBuilder<List<TransactionModel>>(
+            future: _transactionService.getTransactionsList(),
             builder: (context, transactionSnapshot) {
               if (!transactionSnapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -63,10 +70,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
-                itemCount: budgetSnapshot.data!.length,
+                itemCount: budgets.length,
                 itemBuilder: (context, index) {
-                  final budget = budgetSnapshot.data![index];
-                  
+                  final budget = budgets[index];
+
                   final spent = transactions
                       .where((t) =>
                           t.type == 'expense' &&
@@ -74,7 +81,8 @@ class _BudgetScreenState extends State<BudgetScreen> {
                           t.date.isAfter(currentMonth))
                       .fold(0.0, (sum, t) => sum + t.amount);
 
-                  final percentage = (spent / budget.amount) * 100;
+                  final percentage =
+                      budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
                   final remaining = budget.amount - spent;
 
                   return Card(
@@ -95,8 +103,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
                                 ),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () => _budgetService.deleteBudget(budget.id),
+                                icon:
+                                    const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () =>
+                                    _budgetService.deleteBudget(budget.id),
                               ),
                             ],
                           ),
@@ -105,7 +115,8 @@ class _BudgetScreenState extends State<BudgetScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text('Spent: ₹${spent.toStringAsFixed(0)}'),
-                              Text('Budget: ₹${budget.amount.toStringAsFixed(0)}'),
+                              Text(
+                                  'Budget: ₹${budget.amount.toStringAsFixed(0)}'),
                             ],
                           ),
                           const SizedBox(height: 8),
@@ -127,7 +138,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
                               Text(
                                 '${percentage.toStringAsFixed(1)}% used',
                                 style: TextStyle(
-                                  color: percentage > 90 ? Colors.red : Colors.grey,
+                                  color: percentage > 90
+                                      ? Colors.red
+                                      : Colors.grey,
                                   fontSize: 12,
                                 ),
                               ),
@@ -136,7 +149,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
                                     ? '₹${remaining.toStringAsFixed(0)} left'
                                     : '₹${(-remaining).toStringAsFixed(0)} over',
                                 style: TextStyle(
-                                  color: remaining >= 0 ? Colors.green : Colors.red,
+                                  color: remaining >= 0
+                                      ? Colors.green
+                                      : Colors.red,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
                                 ),
@@ -161,7 +176,18 @@ class _BudgetScreenState extends State<BudgetScreen> {
   }
 
   void _showAddBudgetDialog(BuildContext context) {
-    final categories = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'Education', 'Other'];
+    final categories = [
+      'Food & Dining',
+      'Shopping',
+      'Transportation',
+      'Entertainment',
+      'Bills & Utilities',
+      'Healthcare',
+      'Education',
+      'Personal Care',
+      'Travel',
+      'Other'
+    ];
     String selectedCategory = categories[0];
     final amountController = TextEditingController();
 
@@ -176,13 +202,17 @@ class _BudgetScreenState extends State<BudgetScreen> {
               DropdownButtonFormField<String>(
                 value: selectedCategory,
                 decoration: const InputDecoration(labelText: 'Category'),
-                items: categories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                items: categories
+                    .map(
+                        (cat) => DropdownMenuItem(value: cat, child: Text(cat)))
+                    .toList(),
                 onChanged: (value) => setState(() => selectedCategory = value!),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: amountController,
-                decoration: const InputDecoration(labelText: 'Monthly Budget Amount'),
+                decoration:
+                    const InputDecoration(labelText: 'Monthly Budget Amount'),
                 keyboardType: TextInputType.number,
               ),
             ],
@@ -196,15 +226,30 @@ class _BudgetScreenState extends State<BudgetScreen> {
               onPressed: () async {
                 final amount = double.tryParse(amountController.text);
                 if (amount != null && amount > 0) {
-                  final budget = Budget(
+                  // ✅ Get current user ID
+                  final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+                  if (currentUserId == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('User not logged in'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+
+                  final now = DateTime.now();
+                  final budget = BudgetModel(
                     id: '',
+                    userId: currentUserId, // ✅ NEW: Add userId
                     category: selectedCategory,
                     amount: amount,
-                    period: 'monthly',
-                    createdDate: DateTime.now(),
+                    month: now.month,
+                    year: now.year,
+                    createdAt: now,
                   );
                   await _budgetService.addBudget(budget);
-                  Navigator.pop(context);
+                  if (context.mounted) Navigator.pop(context);
                 }
               },
               child: const Text('Add'),

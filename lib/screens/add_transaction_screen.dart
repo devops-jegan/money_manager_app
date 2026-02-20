@@ -1,10 +1,24 @@
+import '../utils/categories.dart';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import '../models/transaction.dart' as app_transaction;
-import '../services/firestore_service.dart';
+import '../models/transaction_model.dart';
+import '../models/account_model.dart';
+import '../services/transaction_service.dart';
+import '../services/account_service.dart';
+import 'accounts_screen.dart';
+import '../widgets/custom_snackbar.dart';
+import '../widgets/loading_overlay.dart';
 
 class AddTransactionScreen extends StatefulWidget {
-  const AddTransactionScreen({super.key});
+  final TransactionModel? transaction;
+  final bool isCopy;
+
+  const AddTransactionScreen({
+    super.key,
+    this.transaction,
+    this.isCopy = false,
+  });
 
   @override
   State<AddTransactionScreen> createState() => _AddTransactionScreenState();
@@ -12,290 +26,841 @@ class AddTransactionScreen extends StatefulWidget {
 
 class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _notesController = TextEditingController();
-  final FirestoreService _firestoreService = FirestoreService();
+  final TransactionService _transactionService = TransactionService();
+  final AccountService _accountService = AccountService();
 
-  String _selectedType = 'expense';
-  String _selectedCategory = 'Food';
+  String _type = 'expense'; // defult expense
+  final TextEditingController _amountController = TextEditingController();
+  String? _selectedCategory;
+  String? _selectedSubcategory;
+  String? _paymentMethod; // Made nullable - optional for expenses
+  String? _fromAccount; // For expense and transfer
+  String? _toAccount; // For income and transfer
+
   DateTime _selectedDate = DateTime.now();
+  final TextEditingController _noteController = TextEditingController();
   bool _isLoading = false;
-  
-  // ✅ NEW: Payment method variables
-  String? _selectedPaymentMethod;
-  final List<String> _paymentMethods = ['Cash', 'Card', 'UPI', 'Bank Transfer'];
+  bool _isRecurring = false;
+  String _recurringFrequency = 'monthly';
 
-  final List<String> _expenseCategories = [
-    'Food',
-    'Transport',
-    'Shopping',
-    'Bills',
-    'Entertainment',
-    'Health',
-    'Education',
-    'Other'
-  ];
+  List<AccountModel> _accounts = [];
 
-  final List<String> _incomeCategories = [
-    'Salary',
-    'Business',
-    'Investment',
-    'Gift',
-    'Other'
+  final List<String> _paymentMethods = [
+    'Cash',
+    'Credit Card',
+    'Debit Card',
+    'UPI',
+    'Net Banking',
+    'Wallet',
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _loadAccounts();
+    if (widget.transaction != null) {
+      _type = widget.transaction!.type;
+      _amountController.text = widget.transaction!.amount.toString();
+      _selectedCategory = widget.transaction!.category;
+      _selectedSubcategory = widget.transaction!.subcategory;
+      _paymentMethod = widget.transaction!.paymentMethod;
+      _fromAccount = widget.transaction!.fromAccount;
+      _toAccount = widget.transaction!.toAccount;
+      _selectedDate = widget.transaction!.date;
+      _noteController.text = widget.transaction!.note ?? '';
+    }
+  }
+
+  void _loadAccounts() {
+    _accountService.getAccounts().listen((accountsList) {
+      setState(() {
+        _accounts = accountsList;
+      });
+    });
+  }
+
+  @override
   void dispose() {
-    _titleController.dispose();
     _amountController.dispose();
-    _notesController.dispose();
+    _noteController.dispose();
     super.dispose();
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null && picked != _selectedDate) {
-      setState(() {
-        _selectedDate = picked;
-      });
-    }
-  }
-
-  Future<void> _saveTransaction() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
-
-      try {
-        // ✅ UPDATED: Added paymentMethod parameter
-        final transaction = app_transaction.Transaction(
-          id: '',
-          title: _titleController.text,
-          amount: double.parse(_amountController.text),
-          category: _selectedCategory,
-          type: _selectedType,
-          date: _selectedDate,
-          notes: _notesController.text.isEmpty ? null : _notesController.text,
-          paymentMethod: _selectedPaymentMethod,  // ✅ NEW LINE
-        );
-
-        await _firestoreService.addTransaction(transaction);
-
-        if (mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Transaction added successfully!')),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    List<String> categories =
-        _selectedType == 'expense' ? _expenseCategories : _incomeCategories;
-
-    if (!categories.contains(_selectedCategory)) {
-      _selectedCategory = categories[0];
-    }
+    final isEdit = widget.transaction != null && !widget.isCopy;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add Transaction'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: Text(widget.isCopy
+            ? 'Copy Transaction'
+            : (isEdit ? 'Edit Transaction' : 'Add Transaction')),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Type selector (Income/Expense)
-              Row(
-                children: [
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('Expense'),
-                      value: 'expense',
-                      groupValue: _selectedType,
-                      onChanged: (value) {
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Type Selector (Income/Expense/Transfer) - Income first
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'income',
+                  label: Text('Income'),
+                  icon: Icon(Icons.add_circle_outline),
+                ),
+                ButtonSegment(
+                  value: 'expense',
+                  label: Text('Expense'),
+                  icon: Icon(Icons.remove_circle_outline),
+                ),
+                ButtonSegment(
+                  value: 'transfer',
+                  label: Text('Transfer'),
+                  icon: Icon(Icons.swap_horiz),
+                ),
+              ],
+              selected: {_type},
+              onSelectionChanged: (Set<String> newSelection) {
+                setState(() {
+                  _type = newSelection.first;
+                  _selectedCategory = null;
+                  _selectedSubcategory = null;
+                  _fromAccount = null;
+                  _toAccount = null;
+                });
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // Amount
+            TextFormField(
+              controller: _amountController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Amount *',
+                prefixText: '₹ ',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter amount';
+                }
+                if (double.tryParse(value) == null) {
+                  return 'Please enter valid amount';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Date Picker (Moved to top)
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDate,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                      );
+                      if (date != null) {
                         setState(() {
-                          _selectedType = value!;
+                          _selectedDate = date;
                         });
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('Income'),
-                      value: 'income',
-                      groupValue: _selectedType,
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedType = value!;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Title field
-              TextFormField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Title',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.title),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a title';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Amount field
-              TextFormField(
-                controller: _amountController,
-                decoration: const InputDecoration(
-                  labelText: 'Amount',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.currency_rupee),
-                ),
-                keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
-                  }
-                  if (double.tryParse(value) == null) {
-                    return 'Please enter a valid number';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Category dropdown
-              DropdownButtonFormField<String>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(
-                  labelText: 'Category',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.category),
-                ),
-                items: categories.map((String category) {
-                  return DropdownMenuItem<String>(
-                    value: category,
-                    child: Text(category),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  setState(() {
-                    _selectedCategory = newValue!;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Date picker
-              ListTile(
-                title: Text('Date: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}'),
-                leading: const Icon(Icons.calendar_today),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(4),
-                  side: BorderSide(color: Colors.grey.shade400),
-                ),
-                onTap: () => _selectDate(context),
-              ),
-              const SizedBox(height: 16),
-
-              // ✅ NEW: Payment method dropdown
-              DropdownButtonFormField<String>(
-                value: _selectedPaymentMethod,
-                decoration: const InputDecoration(
-                  labelText: 'Payment Method (Optional)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.payment),
-                ),
-                items: _paymentMethods.map((String method) {
-                  return DropdownMenuItem<String>(
-                    value: method,
-                    child: Text(method),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  setState(() {
-                    _selectedPaymentMethod = newValue;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Notes field
-              TextFormField(
-                controller: _notesController,
-                decoration: const InputDecoration(
-                  labelText: 'Notes (Optional)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.note),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 24),
-
-              // Save button
-              ElevatedButton(
-                onPressed: _isLoading ? null : _saveTransaction,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.all(16),
-                  backgroundColor: _selectedType == 'income'
-                      ? Colors.green
-                      : Colors.red,
-                  foregroundColor: Colors.white,
-                ),
-                child: _isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : Text(
-                        'Add ${_selectedType == 'income' ? 'Income' : 'Expense'}',
+                      }
+                    },
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Date *',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.calendar_today),
+                      ),
+                      child: Text(
+                        DateFormat('MMM d, yyyy').format(_selectedDate),
                         style: const TextStyle(fontSize: 16),
                       ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Repeat toggle
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _isRecurring = !_isRecurring;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey[400]!),
+                      borderRadius: BorderRadius.circular(4),
+                      color: _isRecurring ? Colors.blue[50] : null,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.repeat,
+                          color: _isRecurring ? Colors.blue : Colors.grey[600],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Repeat',
+                          style: TextStyle(
+                            color:
+                                _isRecurring ? Colors.blue : Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Show recurring frequency if enabled
+            if (_isRecurring) ...[
+              DropdownButtonFormField<String>(
+                value: _recurringFrequency,
+                decoration: const InputDecoration(
+                  labelText: 'Repeat Frequency',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.loop),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                  DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                  DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+                  DropdownMenuItem(value: 'yearly', child: Text('Yearly')),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _recurringFrequency = value!;
+                  });
+                },
               ),
+              const SizedBox(height: 16),
             ],
-          ),
+
+            // Show different fields based on type
+            if (_type == 'transfer') ...[
+              _buildTransferFields(),
+            ] else ...[
+              _buildCategoryFields(),
+              const SizedBox(height: 16),
+              _buildAccountField(), // NEW: Account selection for income/expense
+              // const SizedBox(height: 16),
+              // if (_type == 'expense') _buildPaymentMethodField(), // Optional for expense only
+            ],
+
+            const SizedBox(height: 16),
+
+            // Note
+            TextFormField(
+              controller: _noteController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Note (Optional)',
+                border: OutlineInputBorder(),
+                hintText: 'Add a note...',
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Save Button
+            ElevatedButton(
+              onPressed: _isLoading ? null : _saveTransaction,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.all(16),
+              ),
+              child: _isLoading
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(
+                      isEdit ? 'UPDATE' : 'SAVE',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  // NEW METHOD: Account selection for Income/Expense
+// Single Account field for Income/Expense
+// Single Account field for Income/Expense
+  Widget _buildAccountField() {
+    // ✅ Show button when no accounts exist
+    if (_accounts.isEmpty) {
+      return Column(
+        children: [
+          OutlinedButton.icon(
+            onPressed: () {
+              // ✅ FIXED: Use proper navigation
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AccountsScreen(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('Create Account First'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.all(16),
+              minimumSize: const Size.fromHeight(50),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'You need at least one account to add transactions',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ],
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      value: _type == 'income' ? _toAccount : _fromAccount,
+      decoration: const InputDecoration(
+        labelText: 'Account *',
+        border: OutlineInputBorder(),
+        prefixIcon: Icon(Icons.account_balance_wallet),
+        hintText: 'Select account',
+      ),
+      items: _accounts.map((account) {
+        return DropdownMenuItem<String>(
+          value: account.id,
+          child: Row(
+            children: [
+              Icon(_getAccountTypeIcon(account.type), size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${account.name} (₹${account.balance.toStringAsFixed(0)})',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+      onChanged: (value) {
+        setState(() {
+          if (_type == 'income') {
+            _toAccount = value;
+          } else {
+            _fromAccount = value;
+          }
+        });
+      },
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return 'Please select an account';
+        }
+        return null;
+      },
+    );
+  }
+  // Widget _buildAccountField() {
+  //   return DropdownButtonFormField<String>(
+  //     value: _type == 'income' ? _toAccount : _fromAccount,
+  //     decoration: InputDecoration(
+  //       labelText: _type == 'income' ? 'To Account (Optional)' : 'From Account (Optional)',
+  //       border: const OutlineInputBorder(),
+  //       prefixIcon: const Icon(Icons.account_balance_wallet),
+  //       hintText: _accounts.isEmpty ? 'Create an account first' : 'Select account',
+  //     ),
+  //     items: [
+  //       const DropdownMenuItem<String>(
+  //         value: null,
+  //         child: Text('No account selected'),
+  //       ),
+  //       ..._accounts.map((account) {
+  //         return DropdownMenuItem<String>(
+  //           value: account.id,
+  //           child: Row(
+  //             children: [
+  //               Icon(_getAccountTypeIcon(account.type), size: 20),
+  //               const SizedBox(width: 8),
+  //               Expanded(
+  //                 child: Text(
+  //                   '${account.name} (₹${account.balance.toStringAsFixed(0)})',
+  //                   overflow: TextOverflow.ellipsis,
+  //                 ),
+  //               ),
+  //             ],
+  //           ),
+  //         );
+  //       }).toList(),
+  //     ],
+  //     onChanged: (value) {
+  //       setState(() {
+  //         if (_type == 'income') {
+  //           _toAccount = value;
+  //         } else {
+  //           _fromAccount = value;
+  //         }
+  //       });
+  //     },
+  //   );
+  // }
+
+  // Helper method for account type icons
+  IconData _getAccountTypeIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'bank':
+        return Icons.account_balance;
+      case 'cash':
+        return Icons.money;
+      case 'credit card':
+      case 'card':
+        return Icons.credit_card;
+      case 'wallet':
+        return Icons.account_balance_wallet;
+      case 'loan':
+        return Icons.trending_down;
+      default:
+        return Icons.account_circle;
+    }
+  }
+
+  Widget _buildCategoryFields() {
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => _showCategoryPicker(),
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Category *',
+              border: OutlineInputBorder(),
+              suffixIcon: Icon(Icons.arrow_drop_down),
+            ),
+            child: Text(
+              _selectedCategory != null
+                  ? _selectedSubcategory != null
+                      ? '$_selectedCategory - $_selectedSubcategory'
+                      : _selectedCategory!
+                  : 'Select category',
+              style: TextStyle(
+                fontSize: 16,
+                color: _selectedCategory != null ? Colors.black : Colors.grey,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showCategoryPicker() {
+    final categories = Categories.getMainCategories(_type);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.9,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) {
+          return Column(
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Select Category',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Categories Grid (3 per row like Money Manager)
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: categories.length,
+                  itemBuilder: (context, index) {
+                    final category = categories[index];
+                    final subcategories =
+                        Categories.getSubcategories(_type, category);
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Main Category Header
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          color: Colors.grey[200],
+                          child: Row(
+                            children: [
+                              Icon(
+                                _getCategoryIcon(category),
+                                color: _type == 'expense'
+                                    ? Colors.red
+                                    : Colors.green,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                category,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Subcategories Grid (3 per row)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              childAspectRatio: 2.5,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                            ),
+                            itemCount: subcategories.length,
+                            itemBuilder: (context, subIndex) {
+                              final sub = subcategories[subIndex];
+                              final isSelected =
+                                  _selectedCategory == category &&
+                                      _selectedSubcategory == sub;
+
+                              return OutlinedButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedCategory = category;
+                                    _selectedSubcategory = sub;
+                                  });
+                                  Navigator.pop(context);
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  backgroundColor:
+                                      isSelected ? Colors.blue[50] : null,
+                                  side: BorderSide(
+                                    color: isSelected
+                                        ? Colors.blue
+                                        : Colors.grey[300]!,
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                ),
+                                child: Text(
+                                  sub,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color:
+                                        isSelected ? Colors.blue : Colors.black,
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Custom categories coming in next update!'),
+                                  backgroundColor: Colors.blue,
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add New Category'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(48),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+// recently deleted this for not necessary feature
+// Widget _buildPaymentMethodField() {
+//   return DropdownButtonFormField<String>(
+//     value: _paymentMethod,
+//     decoration: const InputDecoration(
+//       labelText: 'Payment Method (Optional)',
+//       border: OutlineInputBorder(),
+//       prefixIcon: Icon(Icons.payment),
+//       hintText: 'Cash, Card, UPI, etc.',
+//     ),
+//     items: [
+//       const DropdownMenuItem<String>(
+//         value: null,
+//         child: Text('Not specified'),
+//       ),
+//       ..._paymentMethods
+//           .map((pm) => DropdownMenuItem(value: pm, child: Text(pm)))
+//           .toList(),
+//     ],
+//     onChanged: (value) {
+//       setState(() {
+//         _paymentMethod = value;
+//       });
+//     },
+//   );
+// }
+  // Widget _buildPaymentMethodField() {
+  //   return DropdownButtonFormField<String>(
+  //     value: _paymentMethod,
+  //     decoration: const InputDecoration(
+  //       labelText: 'Payment Method (Optional)',
+  //       border: OutlineInputBorder(),
+  //       prefixIcon: Icon(Icons.payment),
+  //       hintText: 'How did you pay?',
+  //     ),
+  //     items: [
+  //       const DropdownMenuItem<String>(
+  //         value: null,
+  //         child: Text('Not specified'),
+  //       ),
+  //       ..._paymentMethods
+  //           .map((pm) => DropdownMenuItem(value: pm, child: Text(pm)))
+  //           .toList(),
+  //     ],
+  //     onChanged: (value) {
+  //       setState(() {
+  //         _paymentMethod = value;
+  //       });
+  //     },
+  //   );
+  // }
+
+  Widget _buildTransferFields() {
+    return Column(
+      children: [
+        DropdownButtonFormField<String>(
+          value: _fromAccount,
+          decoration: const InputDecoration(
+            labelText: 'From Account *',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.account_balance_wallet),
+          ),
+          items: _accounts
+              .map((account) => DropdownMenuItem(
+                    value: account.id,
+                    child: Text(
+                        '${account.name} (₹${account.balance.toStringAsFixed(0)})'),
+                  ))
+              .toList(),
+          onChanged: (value) {
+            setState(() {
+              _fromAccount = value;
+            });
+          },
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return 'Please select source account';
+            }
+            if (value == _toAccount) {
+              return 'Cannot transfer to same account';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: IconButton(
+            onPressed: () {
+              setState(() {
+                final temp = _fromAccount;
+                _fromAccount = _toAccount;
+                _toAccount = temp;
+              });
+            },
+            icon: const Icon(Icons.swap_vert),
+            iconSize: 32,
+            color: Colors.blue,
+          ),
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          value: _toAccount,
+          decoration: const InputDecoration(
+            labelText: 'To Account *',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.account_balance),
+          ),
+          items: _accounts
+              .map((account) => DropdownMenuItem(
+                    value: account.id,
+                    child: Text(
+                        '${account.name} (₹${account.balance.toStringAsFixed(0)})'),
+                  ))
+              .toList(),
+          onChanged: (value) {
+            setState(() {
+              _toAccount = value;
+            });
+          },
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return 'Please select destination account';
+            }
+            if (value == _fromAccount) {
+              return 'Cannot transfer to same account';
+            }
+            return null;
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveTransaction() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_type != 'transfer' && _selectedCategory == null) {
+      CustomSnackBar.show(
+        context,
+        message: 'Please select a category',
+        type: SnackBarType.error,
+      );
+      return;
+    }
+
+    LoadingOverlay.show(context, message: 'Saving...');
+
+    try {
+      final transaction = TransactionModel(
+        userId: '',
+        id: '',
+        type: _type,
+        amount: double.parse(_amountController.text),
+        category: _selectedCategory ?? '',
+        subcategory: _selectedSubcategory,
+        paymentMethod: _paymentMethod,
+        date: _selectedDate,
+        note: _noteController.text.isEmpty ? null : _noteController.text,
+        fromAccount: _type == 'transfer'
+            ? _fromAccount
+            : (_type == 'expense' ? _fromAccount : null),
+        toAccount: _type == 'transfer'
+            ? _toAccount
+            : (_type == 'income' ? _toAccount : null),
+        isRecurring: _isRecurring,
+        recurringFrequency: _isRecurring ? _recurringFrequency : null,
+        imageUrl: null,
+        createdAt: DateTime.now(),
+      );
+
+      if (widget.transaction != null && !widget.isCopy) {
+        await _transactionService.updateTransaction(
+          widget.transaction!.id,
+          transaction,
+        );
+      } else {
+        await _transactionService.addTransaction(transaction);
+      }
+
+      if (mounted) {
+        LoadingOverlay.hide(context);
+        CustomSnackBar.show(
+          context,
+          message: widget.isCopy
+              ? 'Transaction copied successfully!'
+              : (widget.transaction != null
+                  ? 'Transaction updated!'
+                  : 'Transaction saved successfully!'),
+          type: SnackBarType.success,
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        LoadingOverlay.hide(context);
+        CustomSnackBar.show(
+          context,
+          message: 'Failed to save: $e',
+          type: SnackBarType.error,
+        );
+      }
+    }
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Food & Dining':
+        return Icons.restaurant;
+      case 'Transportation':
+        return Icons.directions_car;
+      case 'Shopping':
+        return Icons.shopping_bag;
+      case 'Entertainment':
+        return Icons.movie;
+      case 'Bills & Utilities':
+        return Icons.receipt;
+      case 'Healthcare':
+        return Icons.local_hospital;
+      case 'Education':
+        return Icons.school;
+      case 'Personal Care':
+        return Icons.spa;
+      case 'Travel':
+        return Icons.flight;
+      case 'Salary':
+        return Icons.account_balance_wallet;
+      case 'Business':
+        return Icons.business;
+      case 'Investments':
+        return Icons.trending_up;
+      case 'Gifts':
+        return Icons.card_giftcard;
+      default:
+        return Icons.category;
+    }
   }
 }

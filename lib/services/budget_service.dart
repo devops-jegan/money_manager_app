@@ -1,25 +1,52 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../models/budget.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/budget_model.dart';
 
 class BudgetService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final String _collectionName = 'budgets';
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final String _collection = 'budgets';
 
-  Future<void> addBudget(Budget budget) async {
-    await _db.collection(_collectionName).add(budget.toMap());
+  String? get _currentUserId => _auth.currentUser?.uid;
+
+  Stream<QuerySnapshot> getBudgets() {
+    final userId = _currentUserId;
+    if (userId == null) return const Stream.empty();
+    return _firestore
+        .collection(_collection)
+        .where('userId', isEqualTo: userId)
+        .snapshots();
   }
 
-  Stream<List<Budget>> getBudgets() {
-    return _db.collection(_collectionName).snapshots().map(
-      (snapshot) => snapshot.docs.map((doc) => Budget.fromFirestore(doc)).toList(),
-    );
+  Stream<QuerySnapshot> getBudgetsForMonth(int month, int year) {
+    final userId = _currentUserId;
+    if (userId == null) return const Stream.empty();
+    return _firestore
+        .collection(_collection)
+        .where('userId', isEqualTo: userId)
+        .where('month', isEqualTo: month)
+        .where('year', isEqualTo: year)
+        .snapshots();
   }
 
-  Future<void> updateBudget(String id, Budget budget) async {
-    await _db.collection(_collectionName).doc(id).update(budget.toMap());
+  Future<void> addBudget(BudgetModel budget) async {
+    if (_currentUserId == null) throw Exception('User not logged in');
+    await _firestore.collection(_collection).add(budget.toMap());
+  }
+
+  Future<void> updateBudget(String id, BudgetModel budget) async {
+    if (_currentUserId == null) throw Exception('User not logged in');
+    await _firestore.collection(_collection).doc(id).update(budget.toMap());
   }
 
   Future<void> deleteBudget(String id) async {
-    await _db.collection(_collectionName).doc(id).delete();
+    if (_currentUserId == null) throw Exception('User not logged in');
+    await _firestore.collection(_collection).doc(id).delete();
+  }
+
+  Future<BudgetModel?> getBudgetById(String id) async {
+    if (_currentUserId == null) throw Exception('User not logged in');
+    final doc = await _firestore.collection(_collection).doc(id).get();
+    return doc.exists ? BudgetModel.fromFirestore(doc) : null;
   }
 }
