@@ -9,6 +9,9 @@ import '../services/account_service.dart';
 import 'accounts_screen.dart';
 import '../widgets/custom_snackbar.dart';
 import '../widgets/loading_overlay.dart';
+import 'dart:typed_data';
+import '../services/storage_service.dart';
+import '../widgets/receipt_picker.dart';
 
 class AddTransactionScreen extends StatefulWidget {
   final TransactionModel? transaction;
@@ -29,16 +32,23 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   final TransactionService _transactionService = TransactionService();
   final AccountService _accountService = AccountService();
 
-  String _type = 'expense'; // defult expense
+  // Receipt fields
+  final StorageService _storageService = StorageService();
+  Uint8List? _receiptImage;
+  String? _receiptUrl;
+
+  String _type = 'expense';
   final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+
   String? _selectedCategory;
   String? _selectedSubcategory;
-  String? _paymentMethod; // Made nullable - optional for expenses
-  String? _fromAccount; // For expense and transfer
-  String? _toAccount; // For income and transfer
+  String? _paymentMethod;
+  String? _fromAccount;
+  String? _toAccount;
 
   DateTime _selectedDate = DateTime.now();
-  final TextEditingController _noteController = TextEditingController();
   bool _isLoading = false;
   bool _isRecurring = false;
   String _recurringFrequency = 'monthly';
@@ -68,6 +78,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       _toAccount = widget.transaction!.toAccount;
       _selectedDate = widget.transaction!.date;
       _noteController.text = widget.transaction!.note ?? '';
+      _descriptionController.text = widget.transaction!.description ?? '';
+      _receiptUrl = widget.transaction!.imageUrl;
     }
   }
 
@@ -83,6 +95,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   void dispose() {
     _amountController.dispose();
     _noteController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -101,7 +114,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Type Selector (Income/Expense/Transfer) - Income first
+            // Type Selector
             SegmentedButton<String>(
               segments: const [
                 ButtonSegment(
@@ -155,7 +168,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Date Picker (Moved to top)
+            // Date Picker
             Row(
               children: [
                 Expanded(
@@ -223,7 +236,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Show recurring frequency if enabled
+            // Recurring frequency
             if (_isRecurring) ...[
               DropdownButtonFormField<String>(
                 value: _recurringFrequency,
@@ -247,15 +260,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Show different fields based on type
+            // Fields based on type
             if (_type == 'transfer') ...[
               _buildTransferFields(),
             ] else ...[
               _buildCategoryFields(),
               const SizedBox(height: 16),
-              _buildAccountField(), // NEW: Account selection for income/expense
-              // const SizedBox(height: 16),
-              // if (_type == 'expense') _buildPaymentMethodField(), // Optional for expense only
+              _buildAccountField(),
             ],
 
             const SizedBox(height: 16),
@@ -270,6 +281,22 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 hintText: 'Add a note...',
               ),
             ),
+
+            // Description
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _descriptionController,
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: 'Description (optional)',
+                hintText: 'Additional details',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                prefixIcon: const Icon(Icons.description),
+              ),
+            ),
+
             const SizedBox(height: 24),
 
             // Save Button
@@ -296,17 +323,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     );
   }
 
-  // NEW METHOD: Account selection for Income/Expense
-// Single Account field for Income/Expense
-// Single Account field for Income/Expense
   Widget _buildAccountField() {
-    // ✅ Show button when no accounts exist
     if (_accounts.isEmpty) {
       return Column(
         children: [
           OutlinedButton.icon(
             onPressed: () {
-              // ✅ FIXED: Use proper navigation
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -372,51 +394,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       },
     );
   }
-  // Widget _buildAccountField() {
-  //   return DropdownButtonFormField<String>(
-  //     value: _type == 'income' ? _toAccount : _fromAccount,
-  //     decoration: InputDecoration(
-  //       labelText: _type == 'income' ? 'To Account (Optional)' : 'From Account (Optional)',
-  //       border: const OutlineInputBorder(),
-  //       prefixIcon: const Icon(Icons.account_balance_wallet),
-  //       hintText: _accounts.isEmpty ? 'Create an account first' : 'Select account',
-  //     ),
-  //     items: [
-  //       const DropdownMenuItem<String>(
-  //         value: null,
-  //         child: Text('No account selected'),
-  //       ),
-  //       ..._accounts.map((account) {
-  //         return DropdownMenuItem<String>(
-  //           value: account.id,
-  //           child: Row(
-  //             children: [
-  //               Icon(_getAccountTypeIcon(account.type), size: 20),
-  //               const SizedBox(width: 8),
-  //               Expanded(
-  //                 child: Text(
-  //                   '${account.name} (₹${account.balance.toStringAsFixed(0)})',
-  //                   overflow: TextOverflow.ellipsis,
-  //                 ),
-  //               ),
-  //             ],
-  //           ),
-  //         );
-  //       }).toList(),
-  //     ],
-  //     onChanged: (value) {
-  //       setState(() {
-  //         if (_type == 'income') {
-  //           _toAccount = value;
-  //         } else {
-  //           _fromAccount = value;
-  //         }
-  //       });
-  //     },
-  //   );
-  // }
 
-  // Helper method for account type icons
   IconData _getAccountTypeIcon(String type) {
     switch (type.toLowerCase()) {
       case 'bank':
@@ -502,7 +480,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 ),
               ),
 
-              // Categories Grid (3 per row like Money Manager)
+              // Categories Grid
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -515,7 +493,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Main Category Header
                         Container(
                           padding: const EdgeInsets.all(16),
                           color: Colors.grey[200],
@@ -538,8 +515,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                             ],
                           ),
                         ),
-
-                        // Subcategories Grid (3 per row)
                         Padding(
                           padding: const EdgeInsets.all(8),
                           child: GridView.builder(
@@ -627,57 +602,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       ),
     );
   }
-// recently deleted this for not necessary feature
-// Widget _buildPaymentMethodField() {
-//   return DropdownButtonFormField<String>(
-//     value: _paymentMethod,
-//     decoration: const InputDecoration(
-//       labelText: 'Payment Method (Optional)',
-//       border: OutlineInputBorder(),
-//       prefixIcon: Icon(Icons.payment),
-//       hintText: 'Cash, Card, UPI, etc.',
-//     ),
-//     items: [
-//       const DropdownMenuItem<String>(
-//         value: null,
-//         child: Text('Not specified'),
-//       ),
-//       ..._paymentMethods
-//           .map((pm) => DropdownMenuItem(value: pm, child: Text(pm)))
-//           .toList(),
-//     ],
-//     onChanged: (value) {
-//       setState(() {
-//         _paymentMethod = value;
-//       });
-//     },
-//   );
-// }
-  // Widget _buildPaymentMethodField() {
-  //   return DropdownButtonFormField<String>(
-  //     value: _paymentMethod,
-  //     decoration: const InputDecoration(
-  //       labelText: 'Payment Method (Optional)',
-  //       border: OutlineInputBorder(),
-  //       prefixIcon: Icon(Icons.payment),
-  //       hintText: 'How did you pay?',
-  //     ),
-  //     items: [
-  //       const DropdownMenuItem<String>(
-  //         value: null,
-  //         child: Text('Not specified'),
-  //       ),
-  //       ..._paymentMethods
-  //           .map((pm) => DropdownMenuItem(value: pm, child: Text(pm)))
-  //           .toList(),
-  //     ],
-  //     onChanged: (value) {
-  //       setState(() {
-  //         _paymentMethod = value;
-  //       });
-  //     },
-  //   );
-  // }
 
   Widget _buildTransferFields() {
     return Column(
@@ -775,6 +699,16 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     LoadingOverlay.show(context, message: 'Saving...');
 
     try {
+      final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      String? uploadedImageUrl;
+      // if (_receiptImage != null) {
+      //   uploadedImageUrl = await _storageService.uploadReceipt(
+      //     _receiptImage!,
+      //     widget.transaction?.id ?? tempId,
+      //   );
+      // }
+
       final transaction = TransactionModel(
         userId: '',
         id: '',
@@ -785,6 +719,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         paymentMethod: _paymentMethod,
         date: _selectedDate,
         note: _noteController.text.isEmpty ? null : _noteController.text,
+        description: _descriptionController.text.trim().isEmpty
+            ? null
+            : _descriptionController.text.trim(),
         fromAccount: _type == 'transfer'
             ? _fromAccount
             : (_type == 'expense' ? _fromAccount : null),
@@ -793,7 +730,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             : (_type == 'income' ? _toAccount : null),
         isRecurring: _isRecurring,
         recurringFrequency: _isRecurring ? _recurringFrequency : null,
-        imageUrl: null,
+        imageUrl: uploadedImageUrl ?? _receiptUrl,
         createdAt: DateTime.now(),
       );
 
